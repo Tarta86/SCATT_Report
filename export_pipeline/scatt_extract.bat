@@ -1,0 +1,1 @@
+forfiles /m *.scatt /c "cscript //NoLogo //B samples.vbs @file" 
