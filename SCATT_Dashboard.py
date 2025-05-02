@@ -221,7 +221,7 @@ xbias,ybias=bias(shots)
 min_t=min(s['t'].min() for s in shots)
 start_hold = st.sidebar.slider("Start Hold-Phase (s)", 
                                float(round(max(-15,min_t),2)),
-                               -0.25, value=-0.5, step=0.01)
+                               -0.25, value=-1.0, step=0.01)
 mask_hold = (t0>=start_hold)&(t0<=-0.2)
 
 st.sidebar.markdown("### Phasen anzeigen")
