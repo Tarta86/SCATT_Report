@@ -300,12 +300,9 @@ def metrics(sh, st_hold):
             Stability=stab,
             Hold_Speed=hold_speed,
             Timing_Angle=timing_angle,
-            X_Timing=xtime,
-            Y_Timing=ytime,
             Center_Distance=dist,
             Score=score
         ))
-
 
     df = pd.DataFrame(rows)
     # Serien & Overall
@@ -662,7 +659,6 @@ def ampelformat_colors(df, cols):
     return styles
 
 df_disp = all_metrics.loc[display_rows].copy()
-df_disp = df_disp.drop(columns=["X_Timing", "Y_Timing"], errors="ignore")
 df_disp[ampel_cols] = df_disp[ampel_cols].applymap(lambda x: round(x, 2) if pd.notna(x) else "")
 
 if color_coded:
