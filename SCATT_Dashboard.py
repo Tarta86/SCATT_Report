@@ -326,13 +326,15 @@ if tab_choice == "🎯 Ziel":
             next_ = phase_order[i + 1]
             if curr not in phase_segments or next_ not in phase_segments:
                 continue
-            x1, y1 = phase_segments[curr][0][0], phase_segments[curr][1][0]  # ✅ letzter Punkt der aktuellen Phase
-            x2, y2 = phase_segments[next_][0][-1], phase_segments[next_][1][-1]  # erster Punkt der nächsten
+            x1 = phase_segments[curr][0][-1]
+            y1 = phase_segments[curr][1][-1]
+            x2 = phase_segments[next_][0][0]
+            y2 = phase_segments[next_][1][0]
             fig.add_trace(go.Scatter(
                 x=[x1, x2],
                 y=[y1, y2],
                 mode='lines',
-                line=dict(width=1, color=phase_col[curr]),  # Farbe der aktuellen Phase
+                line=dict(width=1, color=phase_col[curr]),
                 showlegend=False
             ))
 
@@ -350,42 +352,37 @@ if tab_choice == "🎯 Ziel":
                           x1=x0_ + d / 2, y1=y0_ + d / 2,
                           fillcolor='rgba(255,255,255,0.45)',
                           line_color='white', layer='above')
-                
-                # Timing-Vektoren anzeigen
-        if show_timing_vecs:
-            shot_label = f"Shot {idx+1}"
-            if shot_label in all_metrics.index:
-                row = all_metrics.loc[shot_label]
-                xtime, ytime = row.get("X_Timing", np.nan), row.get("Y_Timing", np.nan)
-                if pd.notna(xtime) and pd.notna(ytime):
-                    # Vektor zum Schusszentrum
-                    fig.add_trace(go.Scatter(
-                        x=[xtime, x0_], y=[ytime, y0_],
-                        mode='lines+markers',
-                        line=dict(color='lime', dash='dot'),
-                        marker=dict(size=4),
-                        showlegend=False
-                    ))
-                    # Vektor zum Scheibenzentrum
-                    fig.add_trace(go.Scatter(
-                        x=[xtime, 0], y=[ytime, 0],
-                        mode='lines+markers',
-                        line=dict(color='orange', dash='dot'),
-                        marker=dict(size=4),
-                        showlegend=False
-                    ))
 
+        # Timing-Vektoren anzeigen
+        shot_label = f"Shot {idx+1}"
+        if show_timing_vecs and shot_label in all_metrics.index:
+            row = all_metrics.loc[shot_label]
+            xtime, ytime = row.get("X_Timing", np.nan), row.get("Y_Timing", np.nan)
+            if pd.notna(xtime) and pd.notna(ytime):
+                fig.add_trace(go.Scatter(
+                    x=[xtime, x0_], y=[ytime, y0_],
+                    mode='lines+markers',
+                    line=dict(color='lime', dash='dot'),
+                    marker=dict(size=6),
+                    name=f"{shot_label} ➝ Schuss",
+                    showlegend=False
+                ))
+                fig.add_trace(go.Scatter(
+                    x=[xtime, 0], y=[ytime, 0],
+                    mode='lines+markers',
+                    line=dict(color='orange', dash='dot'),
+                    marker=dict(size=6),
+                    name=f"{shot_label} ➝ Zentrum",
+                    showlegend=False
+                ))
 
-        # Gespeicherten Zoom wiederherstellen
-        fig.update_layout(
-            xaxis=dict(range=st.session_state.zoom_range["x"]) if st.session_state.zoom_range["x"] else dict(autorange=True),
-            yaxis=dict(range=st.session_state.zoom_range["y"]) if st.session_state.zoom_range["y"] else dict(autorange=True)
-        )
-
+    fig.update_layout(
+        xaxis=dict(autorange=True),
+        yaxis=dict(autorange=True)
+    )
 
     st.plotly_chart(fig, use_container_width=True,
                     config={'scrollZoom': True, 'displaylogo': False})
-    
 
 
 
