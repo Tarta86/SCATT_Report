@@ -352,7 +352,7 @@ if tab_choice == "🎯 Ziel":
                           line_color='white', layer='above')
                 
                 # Timing-Vektoren anzeigen
-        if show_timing_vecs and "X_Timing" in all_metrics.columns:
+        if show_timing_vecs:
             shot_label = f"Shot {idx+1}"
             if shot_label in all_metrics.index:
                 row = all_metrics.loc[shot_label]
@@ -374,6 +374,7 @@ if tab_choice == "🎯 Ziel":
                         marker=dict(size=4),
                         showlegend=False
                     ))
+
 
         # Gespeicherten Zoom wiederherstellen
         fig.update_layout(
