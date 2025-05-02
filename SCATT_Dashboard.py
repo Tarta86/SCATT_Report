@@ -112,7 +112,6 @@ def load_excel(file: bytes) -> tuple[list[str], str | None]:
 
 
 up = st.file_uploader("SCATT- oder Excel-Datei", type=["scatt", "txt", "xlsx"])
-
 if not up:
     st.stop()
 invert_y = up.name.lower().endswith(".xlsx")  # Excel braucht -y-Achse
@@ -377,7 +376,9 @@ if tab_choice == "🎯 Ziel":
 
     for idx in sel_idx:
         xi = np.interp(t0, shots[idx]['t'], shots[idx]['x']) - xbias
-        yi = np.interp(t0, shots[idx]['t'], -shots[idx]['y']) - ybias
+        y_raw = -shots[idx]['y'] if invert_y else shots[idx]['y']
+        yi = np.interp(t0, shots[idx]['t'], y_raw) - ybias
+
 
         phase_order = ['approach', 'hold', 'release', 'recoil']
         phase_masks = {
@@ -421,14 +422,16 @@ if tab_choice == "🎯 Ziel":
                                      marker=dict(symbol='x', size=16, color='yellow'),
                                      showlegend=False))
 
-        if show_virtual:
+        if show_virtual or show_timing_vecs:
             x0_, y0_ = xi[idx0], yi[idx0]
+
+        if show_virtual:
             d = PROJECTILE_DIAM[discipline]
             fig.add_shape(type='circle',
-                          x0=x0_ - d/2, y0=y0_ - d/2,
-                          x1=x0_ + d/2, y1=y0_ + d/2,
-                          fillcolor='rgba(255,255,255,0.45)',
-                          line_color='white', layer='above')
+                        x0=x0_ - d/2, y0=y0_ - d/2,
+                        x1=x0_ + d/2, y1=y0_ + d/2,
+                        fillcolor='rgba(255,255,255,0.45)',
+                        line_color='white', layer='above')
 
         # Timing-Vektoren
         if show_timing_vecs:
