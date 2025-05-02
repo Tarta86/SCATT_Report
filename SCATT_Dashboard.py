@@ -4,6 +4,9 @@ from pathlib import Path
 import plotly.graph_objects as go
 
 st.set_page_config(layout="wide")
+if "zoom_range" not in st.session_state:
+    st.session_state.zoom_range = {"x": None, "y": None}
+
 
 # ═══════════════════ Hilfs-Funktionen ═══════════════════════════════════════
 def draw_target_plotly(disc: str) -> go.Figure:
@@ -28,6 +31,7 @@ def draw_target_plotly(disc: str) -> go.Figure:
     }
     specs = specs_map.get(disc)
     fig = go.Figure()
+
     if specs is None:
         fig.add_annotation(text="Unknown discipline",x=0.5,y=0.5,showarrow=False)
         fig.update_layout(xaxis_visible=False,yaxis_visible=False)
@@ -81,6 +85,11 @@ m = re.match(r'^([^\(]+)', lines[0]); discipline = m.group(1).strip() \
           if m and m.group(1).strip() in disc_list else disc_list[0]
 st.sidebar.success(f"Disziplin: **{discipline}**")
 st.text_area("Erste Zeile", lines[0], height=70)
+
+# ═══════════════════ Auswahl-Umschalter (statt Tabs) ═══════════════════════
+tab_choice = st.radio("Ansicht wählen",
+    ("🎯 Ziel","📈 Geschwindigkeit","📏 Ringwert","📊 Gruppenvergleich"),
+    key="main_tabs", horizontal=True)
 
 # ═══════════════════ Shots parsen ══════════════════════════════════════════
 def parse(ls):
@@ -148,6 +157,8 @@ show_phase={k:st.sidebar.checkbox(k.title(),True) for k in
             ['approach','hold','release','recoil']}
 show_avg = st.sidebar.checkbox("Ø Aiming-Punkt",True)
 show_virtual = st.sidebar.checkbox("Virtueller Schuss",True)
+show_timing_vecs = st.sidebar.checkbox("Timing-Vektoren anzeigen", True)
+
 
 # ═══════════════════ Metriken berechnen ════════════════════════════════════
 @st.cache_data(show_spinner="Berechne Metriken…")
@@ -166,32 +177,72 @@ def metrics(sh, st_hold):
     ym=[yi_all[i,mask][finite[i]].mean() if finite[i].any() else np.nan
         for i in range(len(sh))]
 
-    rows=[]
+    rows = []
     for i in range(len(sh)):
-        aiming=math.hypot(xm[i],ym[i])
-        x0,y0=xi_all[i,idx0],yi_all[i,idx0]
-        trigger=math.hypot(xm[i]-x0,ym[i]-y0)
-        mx,my=xi_all[i,mask],yi_all[i,mask]
-        stab=np.nan
-        if np.isfinite(mx).sum()>1 and np.isfinite(my).sum()>1:
-            cov=np.cov(mx,my)
+        aiming = math.hypot(xm[i], ym[i])
+        x0, y0 = xi_all[i, idx0], yi_all[i, idx0]
+        trigger = math.hypot(xm[i] - x0, ym[i] - y0)
+
+        mx, my = xi_all[i, mask], yi_all[i, mask]
+        stab = np.nan
+        if np.isfinite(mx).sum() > 1 and np.isfinite(my).sum() > 1:
+            cov = np.cov(mx, my)
             if np.all(np.isfinite(cov)):
-                ev=np.linalg.eigvals(cov)
-                stab=math.pi*5.991*math.sqrt(ev.max()*ev.min())
-        dist=math.hypot(x0,y0)
-        score=round(issf_score(dist,discipline),1)
-        rows.append(dict(Shot=f"Shot {i+1}",Aiming_Error=aiming,
-            Trigger_Error=trigger,Stability=stab,
-            Center_Distance=dist,Score=score))
-    df=pd.DataFrame(rows)
+                ev = np.linalg.eigvals(cov)
+                stab = math.pi * 5.991 * math.sqrt(ev.max() * ev.min())
+
+        dist = math.hypot(x0, y0)
+        score = round(issf_score(dist, discipline), 1)
+
+        # Geschwindigkeit: v = sqrt(vx^2 + vy^2)
+        vx = np.gradient(xi_all[i], t0)
+        vy = np.gradient(yi_all[i], t0)
+        speed = np.sqrt(vx**2 + vy**2)
+        speed_hold = speed[mask]
+        hold_speed = np.nanmean(speed_hold) if np.isfinite(speed_hold).any() else np.nan
+
+        # Timing Winkel
+        timing_idx_fixed = np.argmin(np.abs(t0 - (-0.05)))
+        xtime = xi_all[i][timing_idx_fixed]
+        ytime = yi_all[i][timing_idx_fixed]
+
+        # Vektoren: Timingpunkt → Schuss & Zentrum
+        v1 = np.array([x0 - xtime, y0 - ytime])        # zum Schuss
+        v2 = np.array([-xtime, -ytime])               # zum Scheibenzentrum
+
+        dot = np.dot(v1, v2)
+        norm_product = np.linalg.norm(v1) * np.linalg.norm(v2)
+        if norm_product == 0:
+            timing_angle = np.nan
+        else:
+            angle_rad = np.arccos(np.clip(dot / norm_product, -1.0, 1.0))
+            timing_angle = np.degrees(angle_rad)
+
+
+
+        rows.append(dict(
+            Shot=f"Shot {i+1}",
+            Aiming_Error=aiming,
+            Trigger_Error=trigger,
+            Stability=stab,
+            Hold_Speed=hold_speed,
+            Timing_Angle=timing_angle,
+            Center_Distance=dist,
+            Score=score
+        ))
+
+    df = pd.DataFrame(rows)
     # Serien & Overall
-    series=[]; n=len(df)
-    for s in range((n+9)//10):
-        m=df.iloc[s*10:(s+1)*10].mean(numeric_only=True)
-        m['Shot']=f"Series {s+1}"; series.append(m)
-    overall=df.mean(numeric_only=True); overall['Shot']="Overall"
-    return (pd.concat([df]+series+[overall],ignore_index=True)
-              .set_index("Shot"))
+    series = []
+    n = len(df)
+    for s in range((n + 9) // 10):
+        m = df.iloc[s * 10:(s + 1) * 10].mean(numeric_only=True)
+        m['Shot'] = f"Series {s + 1}"
+        series.append(m)
+    overall = df.mean(numeric_only=True)
+    overall['Shot'] = "Overall"
+    return (pd.concat([df] + series + [overall], ignore_index=True)
+                .set_index("Shot"))
 
 all_metrics = metrics(shots, start_hold)
 
@@ -208,14 +259,10 @@ st.sidebar.download_button("Metriken CSV",
     all_metrics.loc[display_rows].to_csv().encode("utf-8"),
     "scatt_metrics.csv","text/csv")
 
-# ═══════════════════ Tabelle anzeigen ══════════════════════════════════════
-st.subheader("Metriken")
-st.dataframe(all_metrics.loc[display_rows],use_container_width=True)
 
-# ═══════════════════ Auswahl-Umschalter (statt Tabs) ═══════════════════════
-tab_choice = st.radio("Ansicht wählen",
-                      ("🎯 Ziel","📈 Geschwindigkeit","📏 Ringwert"),
-                      key="main_tabs", horizontal=True)
+
+
+
 
 # ═══════════════════ Gemeinsame Helfer für Speed & Ring  ═══════════════════
 @st.cache_data(show_spinner=False)
@@ -245,41 +292,95 @@ def label_to_indices(labels):
 
 sel_idx = label_to_indices(display_rows)
 
-# ═══════════════════ TAB: ZIEL ═════════════════════════════════════════════
 if tab_choice == "🎯 Ziel":
     fig = draw_target_plotly(discipline)
-    phase_col={'approach':'green','hold':'yellow','release':'blue','recoil':'red'}
+    phase_col = {'approach': 'green', 'hold': 'yellow', 'release': 'blue', 'recoil': 'red'}
+
     for idx in sel_idx:
-        xi=np.interp(t0,shots[idx]['t'],shots[idx]['x'])-xbias
-        yi=np.interp(t0,shots[idx]['t'],-shots[idx]['y'])-ybias
-        if show_phase['approach']:
-            m=t0<start_hold
-            fig.add_trace(go.Scatter(x=xi[m],y=yi[m],mode='lines',
-                line_width=2,line_color=phase_col['approach'],showlegend=False))
-        if show_phase['hold']:
-            m=(t0>=start_hold)&(t0<-0.2)
-            fig.add_trace(go.Scatter(x=xi[m],y=yi[m],mode='lines',
-                line_width=2,line_color=phase_col['hold'],showlegend=False))
-        if show_phase['release']:
-            m=(t0>=-0.2)&(t0<0)
-            fig.add_trace(go.Scatter(x=xi[m],y=yi[m],mode='lines',
-                line_width=2,line_color=phase_col['release'],showlegend=False))
-        if show_phase['recoil']:
-            m=(t0>=0)&(t0<=0.5)
-            fig.add_trace(go.Scatter(x=xi[m],y=yi[m],mode='lines',
-                line_width=2,line_color=phase_col['recoil'],showlegend=False))
+        xi = np.interp(t0, shots[idx]['t'], shots[idx]['x']) - xbias
+        yi = np.interp(t0, shots[idx]['t'], -shots[idx]['y']) - ybias
+
+        phase_order = ['approach', 'hold', 'release', 'recoil']
+        phase_masks = {
+            'approach': t0 < start_hold,
+            'hold': (t0 >= start_hold) & (t0 < -0.2),
+            'release': (t0 >= -0.2) & (t0 < 0),
+            'recoil': (t0 >= 0) & (t0 <= 0.5),
+        }
+
+        phase_segments = {}  # Speichert Segmentdaten
+        for phase in phase_order:
+            if not show_phase[phase]: continue
+            mask = phase_masks[phase]
+            x_seg = xi[mask]
+            y_seg = yi[mask]
+            if len(x_seg) == 0: continue
+            fig.add_trace(go.Scatter(x=x_seg, y=y_seg, mode='lines',
+                                     line=dict(width=2, color=phase_col[phase]),
+                                     showlegend=False))
+            phase_segments[phase] = (x_seg, y_seg)
+
+        # Verbindung: Letzter Punkt dieser Phase → Erster Punkt der nächsten
+        for i in range(len(phase_order) - 1):
+            curr = phase_order[i]
+            next_ = phase_order[i + 1]
+            if curr not in phase_segments or next_ not in phase_segments:
+                continue
+            x1, y1 = phase_segments[curr][0][0], phase_segments[curr][1][0]  # ✅ letzter Punkt der aktuellen Phase
+            x2, y2 = phase_segments[next_][0][-1], phase_segments[next_][1][-1]  # erster Punkt der nächsten
+            fig.add_trace(go.Scatter(
+                x=[x1, x2],
+                y=[y1, y2],
+                mode='lines',
+                line=dict(width=1, color=phase_col[curr]),  # Farbe der aktuellen Phase
+                showlegend=False
+            ))
+
         if show_avg:
-            xm,ym=np.nanmean(xi[mask_hold]),np.nanmean(yi[mask_hold])
-            fig.add_trace(go.Scatter(x=[xm],y=[ym],mode='markers',
-                marker=dict(symbol='x',size=16,color='yellow'),showlegend=False))
+            xm, ym = np.nanmean(xi[mask_hold]), np.nanmean(yi[mask_hold])
+            fig.add_trace(go.Scatter(x=[xm], y=[ym], mode='markers',
+                                     marker=dict(symbol='x', size=16, color='yellow'),
+                                     showlegend=False))
+
         if show_virtual:
-            x0_,y0_=xi[idx0],yi[idx0]; d=PROJECTILE_DIAM[discipline]
-            fig.add_shape(type='circle',x0=x0_-d/2,y0=y0_-d/2,
-                          x1=x0_+d/2,y1=y0_+d/2,
+            x0_, y0_ = xi[idx0], yi[idx0]
+            d = PROJECTILE_DIAM[discipline]
+            fig.add_shape(type='circle',
+                          x0=x0_ - d / 2, y0=y0_ - d / 2,
+                          x1=x0_ + d / 2, y1=y0_ + d / 2,
                           fillcolor='rgba(255,255,255,0.45)',
-                          line_color='white',layer='above')
-    st.plotly_chart(fig,use_container_width=True,
-        config={'scrollZoom':True,'displaylogo':False})
+                          line_color='white', layer='above')
+                
+                # Timing-Vektoren einblenden
+        if show_timing_vecs and "X_Timing" in all_metrics.columns:
+            row = all_metrics.loc[f"Shot {idx+1}"]
+            xtime, ytime = row.get("X_Timing", np.nan), row.get("Y_Timing", np.nan)
+            if pd.notna(xtime) and pd.notna(ytime):
+                # Vektor zur Schussposition
+                fig.add_trace(go.Scatter(x=[xtime, x0_], y=[ytime, y0_],
+                    mode='lines+markers',
+                    line=dict(color='lime', dash='dot'),
+                    marker=dict(size=4),
+                    showlegend=False))
+                # Vektor zum Scheibenzentrum
+                fig.add_trace(go.Scatter(x=[xtime, 0], y=[ytime, 0],
+                    mode='lines+markers',
+                    line=dict(color='orange', dash='dot'),
+                    marker=dict(size=4),
+                    showlegend=False))
+        # Gespeicherten Zoom wiederherstellen
+        fig.update_layout(
+            xaxis=dict(range=st.session_state.zoom_range["x"]) if st.session_state.zoom_range["x"] else dict(autorange=True),
+            yaxis=dict(range=st.session_state.zoom_range["y"]) if st.session_state.zoom_range["y"] else dict(autorange=True)
+        )
+
+
+    st.plotly_chart(fig, use_container_width=True,
+                    config={'scrollZoom': True, 'displaylogo': False})
+    
+
+
+
 
 # ═══════════════════ TAB: GESCHWINDIGKEIT ══════════════════════════════════
 elif tab_choice == "📈 Geschwindigkeit":
@@ -324,7 +425,7 @@ elif tab_choice == "📈 Geschwindigkeit":
         st.plotly_chart(fig2,use_container_width=True)
 
 # ═══════════════════ TAB: RINGWERT ═════════════════════════════════════════
-else:  # "📏 Ringwert"
+elif tab_choice == "📏 Ringwert":  # "📏 Ringwert"
     st.subheader("Ringwert")
     c1,c2=st.columns(2)
     with c1:
@@ -365,3 +466,124 @@ else:  # "📏 Ringwert"
             xaxis=dict(range=[x_min_d,x_max_d],title="Zeit (s)"),
             yaxis=dict(range=[y_min_d,y_max_d],title="Ringwert"))
         st.plotly_chart(figR2,use_container_width=True)
+elif tab_choice == "📊 Gruppenvergleich":
+    st.subheader("Feature-Vergleich nach Gruppen")
+
+    import scipy.stats as stats
+
+    n_groups = st.slider("Anzahl Gruppen", 2, 6, 3)
+    all_shot_labels = [f"Shot {i+1}" for i in range(len(shots))]
+
+    # Gruppennamen links, Zuweisung rechts
+    col_names, col_selects = st.columns(2)
+    with col_names:
+        group_labels = [
+            st.text_input(f"Name für Gruppe {i+1}", value=f"Gruppe {i+1}", key=f"gname_{i}")
+            for i in range(n_groups)
+        ]
+
+    assigned = set()
+    group_assignments = {}
+
+    with col_selects:
+        for i, label in enumerate(group_labels):
+            available = [s for s in all_shot_labels if s not in assigned]
+            sel = st.multiselect(f"{label} – Schüsse wählen", options=available, key=f"group_{i}")
+            group_assignments[label] = sel
+            assigned.update(sel)
+
+    # Feature-Auswahl
+    feature_options = all_metrics.columns.tolist()
+    feature_choice = st.selectbox("Feature wählen", feature_options)
+
+    # Gruppenzugehörigkeit speichern
+    shot_group_map = {}
+    for grp_label, shots_ in group_assignments.items():
+        for shot in shots_:
+            shot_group_map[shot] = grp_label
+
+    all_metrics["Gruppe"] = [shot_group_map.get(idx, "") for idx in all_metrics.index]
+
+    # Plot-Daten vorbereiten
+    plot_df = pd.DataFrame([
+        {"Gruppe": grp, "Wert": all_metrics.loc[shot, feature_choice]}
+        for grp, shots_ in group_assignments.items()
+        for shot in shots_ if shot in all_metrics.index
+    ])
+
+    if plot_df.empty:
+        st.info("Bitte mindestens einen Schuss einer Gruppe zuweisen.")
+    else:
+        # Funktion für Mittelwert + CI95
+        def mean_ci95(vals):
+            vals = np.array(vals, dtype=float)
+            if len(vals) < 2:
+                return np.nan, 0.0
+            mean = np.mean(vals)
+            se = stats.sem(vals, nan_policy='omit')
+            ci = se * stats.t.ppf((1 + 0.95) / 2., len(vals)-1)
+            return mean, ci
+
+        summary_list = []
+        for grp, values in plot_df.groupby("Gruppe")["Wert"]:
+            mean, ci = mean_ci95(values)
+            summary_list.append(dict(Gruppe=grp, Mittelwert=mean, CI=ci))
+
+        summary_df = pd.DataFrame(summary_list)
+
+        fig = go.Figure()
+        for _, row in summary_df.iterrows():
+            fig.add_trace(go.Bar(
+                x=[row["Gruppe"]],
+                y=[row["Mittelwert"]],
+                error_y=dict(type="data", array=[row["CI"]], visible=True),
+                name=row["Gruppe"]
+            ))
+
+        fig.update_layout(title=f"{feature_choice} – Gruppenvergleich mit 95%-Konfidenzintervallen",
+                          xaxis_title="Gruppe", yaxis_title=feature_choice,
+                          height=400, margin=dict(l=20, r=20, t=40, b=40))
+        st.plotly_chart(fig, use_container_width=True)
+
+# ═══════════════════ Metrikenanzeige mit Bewertungs-Option ═══════════════════════════
+st.divider()
+color_coded = st.toggle("🔁 Farbcodierte Darstellung", value=False)
+
+ampel_cols = ["Aiming_Error", "Trigger_Error", "Stability", "Center_Distance", "Hold_Speed", "Timing_Angle"]
+
+# Terzil-basierte Farbzuweisung
+def ampelformat_colors(df, cols):
+    styles = pd.DataFrame('', index=df.index, columns=df.columns)
+    for col in cols:
+        if col not in df.columns: continue
+        values = df[col].dropna()
+        if len(values) < 3: continue
+
+        q1, q2 = values.quantile([1/3, 2/3])
+
+        for idx in df.index:
+            val = df.loc[idx, col]
+            if pd.isna(val): continue
+            if val <= q1:
+                styles.loc[idx, col] = 'background-color: #d4edda'     # grün
+            elif val <= q2:
+                styles.loc[idx, col] = 'background-color: #fff3cd'     # gelb
+            else:
+                styles.loc[idx, col] = 'background-color: #f8d7da'     # rot
+    return styles
+
+df_disp = all_metrics.loc[display_rows].copy()
+df_disp[ampel_cols] = df_disp[ampel_cols].applymap(lambda x: round(x, 2) if pd.notna(x) else "")
+
+if color_coded:
+    st.subheader("📋 Metriken-Tabelle (Ampelsystem)")
+    styles = ampelformat_colors(df_disp, ampel_cols)
+    st.dataframe(
+        df_disp.style
+            .apply(lambda _: styles, axis=None)
+            .format(precision=2),
+        use_container_width=True
+    )
+else:
+    st.subheader("📋 Metriken-Tabelle (Rohwerte)")
+    st.dataframe(df_disp, use_container_width=True)
