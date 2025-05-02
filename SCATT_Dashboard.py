@@ -115,6 +115,8 @@ up = st.file_uploader("SCATT- oder Excel-Datei", type=["scatt", "txt", "xlsx"])
 
 if not up:
     st.stop()
+invert_y = up.name.lower().endswith(".xlsx")  # Excel braucht -y-Achse
+
 # ═══════════════════ Shots parsen ══════════════════════════════════════════
 def parse(ls):
     shots, cur = [], []
@@ -143,7 +145,6 @@ try:
         shots = get_shots(lines)
     else:
         lines = load_content(up.getvalue(), up.name)
-        invert_y = up.name.lower().endswith(".xlsx")  # Excel braucht -y-Achse
         shots = get_shots(lines)
 except Exception as e:
     st.error(str(e))
