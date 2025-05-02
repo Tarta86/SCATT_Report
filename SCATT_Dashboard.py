@@ -143,6 +143,7 @@ try:
         shots = get_shots(lines)
     else:
         lines = load_content(up.getvalue(), up.name)
+        invert_y = up.name.lower().endswith(".xlsx")  # Excel braucht -y-Achse
         shots = get_shots(lines)
 except Exception as e:
     st.error(str(e))
@@ -208,11 +209,12 @@ t0 = np.arange(0.5,-15.001,-0.01); idx0=np.argmin(np.abs(t0))
 def bias(sh):
     arr=[]
     for s in sh:
-        ts=s.sort_values('t')
-        xi=np.interp(t0,ts['t'],ts['x'])
-        yi=np.interp(t0,ts['t'],-ts['y'])
-        arr.append((xi[idx0],yi[idx0]))
-    return np.mean(arr,axis=0)
+        ts = s.sort_values('t')
+        y_vals = -ts['y'] if invert_y else ts['y']
+        xi = np.interp(t0, ts['t'], ts['x'])
+        yi = np.interp(t0, ts['t'], y_vals)
+        arr.append((xi[idx0], yi[idx0]))
+    return np.mean(arr, axis=0)
 xbias,ybias=bias(shots)
 
 # ═══════════════════ Sidebar-Einstellungen ═════════════════════════════════
@@ -238,7 +240,8 @@ def metrics(sh, st_hold):
     for s in sh:
         ts=s.sort_values('t')
         xi_all.append(np.interp(t0,ts['t'],ts['x'])-xbias)
-        yi_all.append(np.interp(t0,ts['t'],-ts['y'])-ybias)
+        y_vals = -ts['y'] if invert_y else ts['y']
+        yi_all.append(np.interp(t0, ts['t'], y_vals) - ybias)
     xi_all,yi_all=np.array(xi_all),np.array(yi_all)
 
     finite=np.isfinite(xi_all[:,mask])&np.isfinite(yi_all[:,mask])
@@ -342,14 +345,16 @@ st.sidebar.download_button("Metriken CSV",
 def vel_dist_arrays(sh, xb, yb):
     vel, dist = [], []
     for s in sh:
-        t=s.sort_values('t')['t'].to_numpy()
-        x=s.sort_values('t')['x'].to_numpy()-xb
-        y=-s.sort_values('t')['y'].to_numpy()-yb
-        xi=np.interp(t0,t,x,left=np.nan,right=np.nan)
-        yi=np.interp(t0,t,y,left=np.nan,right=np.nan)
-        vel.append(np.sqrt(np.gradient(xi,t0)**2+np.gradient(yi,t0)**2))
-        dist.append(np.sqrt(xi**2+yi**2))
-    return np.array(vel),np.array(dist)
+        ts = s.sort_values('t')
+        t = ts['t'].to_numpy()
+        x = ts['x'].to_numpy() - xb
+        y = (-ts['y'] if invert_y else ts['y']).to_numpy() - yb
+        xi = np.interp(t0, t, x, left=np.nan, right=np.nan)
+        yi = np.interp(t0, t, y, left=np.nan, right=np.nan)
+        vel.append(np.sqrt(np.gradient(xi, t0)**2 + np.gradient(yi, t0)**2))
+        dist.append(np.sqrt(xi**2 + yi**2))
+    return np.array(vel), np.array(dist)
+
 
 vel_arr, dist_arr = vel_dist_arrays(shots,xbias,ybias)
 
