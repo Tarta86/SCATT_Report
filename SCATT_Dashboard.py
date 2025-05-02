@@ -73,14 +73,35 @@ def load_content(buf: bytes, name: str) -> list[str]:
     return lines
 
 @st.cache_data(show_spinner="Lade Excel …")
-def load_excel(content: bytes) -> list[pd.DataFrame]:
-    df = pd.read_excel(content)
-    required_cols = {'Shot', 't', 'x', 'y'}
-    if not required_cols.issubset(df.columns):
-        raise ValueError(f"Excel muss die Spalten {required_cols} enthalten")
-    
-    shots = [group[['t', 'x', 'y']].reset_index(drop=True) for _, group in df.groupby("Shot")]
-    return shots
+def load_excel(file: bytes) -> list[str]:
+    # Größtes Tabellenblatt automatisch wählen
+    xls = pd.ExcelFile(file)
+    sheet_lengths = {sheet: pd.read_excel(file, sheet_name=sheet).shape[0] for sheet in xls.sheet_names}
+    main_sheet = max(sheet_lengths, key=sheet_lengths.get)
+    df = pd.read_excel(file, sheet_name=main_sheet)
+
+    # Zeitachse extrahieren
+    if "Zeit (s)" not in df.columns:
+        raise ValueError("Spalte 'Zeit (s)' fehlt in der Excel-Datei.")
+    t_vals = df["Zeit (s)"].to_numpy()
+
+    # Alle Spaltenpaare 'Sx x', 'Sx y' erkennen
+    schussnummern = sorted(set(
+        col.split()[0][1:] for col in df.columns if col.startswith("S") and ("x" in col or "y" in col)
+    ), key=int)
+
+    lines = []
+    for nr in schussnummern:
+        col_x = f"S{nr} x"
+        col_y = f"S{nr} y"
+        if col_x in df.columns and col_y in df.columns:
+            x_vals = df[col_x].to_numpy()
+            y_vals = df[col_y].to_numpy()
+            lines.append(f"Shot #{nr}")
+            for t, x, y in zip(t_vals, x_vals, y_vals):
+                lines.append(f"{t:.3f} {x:.2f} {y:.2f}")
+    return lines
+
 
 
 up = st.file_uploader("SCATT- oder Excel-Datei", type=["scatt", "txt", "xlsx"])
