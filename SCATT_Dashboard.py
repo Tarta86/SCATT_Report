@@ -240,7 +240,7 @@ def metrics(sh, st_hold):
     for s in sh:
         ts=s.sort_values('t')
         xi_all.append(np.interp(t0,ts['t'],ts['x'])-xbias)
-        y_vals = -ts['y'] if invert_y else ts['y']
+        y_vals = -ts['y'] if invert_y else -ts['y']
         yi_all.append(np.interp(t0, ts['t'], y_vals) - ybias)
     xi_all,yi_all=np.array(xi_all),np.array(yi_all)
 
