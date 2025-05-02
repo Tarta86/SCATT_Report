@@ -115,6 +115,27 @@ up = st.file_uploader("SCATT- oder Excel-Datei", type=["scatt", "txt", "xlsx"])
 
 if not up:
     st.stop()
+# ═══════════════════ Shots parsen ══════════════════════════════════════════
+def parse(ls):
+    shots, cur = [], []
+    for l in (ln.strip() for ln in ls):
+        if l.startswith("Shot #"): 
+            if cur: shots.append(pd.DataFrame(cur,columns=["t","x","y"])); cur=[]
+        elif l:
+            p = l.split()
+            if len(p) >= 3:
+                try:
+                    t = float(p[0])
+                    x = float(p[1].split('=')[1] if '=' in p[1] else p[1])
+                    y = float(p[2].split('=')[1] if '=' in p[2] else p[2])
+                    cur.append([t, x, y])
+                except:
+                    pass
+    if cur: shots.append(pd.DataFrame(cur, columns=["t", "x", "y"]))
+    return shots
+
+@st.cache_data(show_spinner=False)
+def get_shots(ls): return parse(ls)
 
 try:
     if up.name.lower().endswith(".xlsx"):
@@ -157,23 +178,6 @@ tab_choice = st.radio("Ansicht wählen",
     ("🎯 Ziel","📈 Geschwindigkeit","📏 Ringwert","📊 Gruppenvergleich"),
     key="main_tabs", horizontal=True)
 
-# ═══════════════════ Shots parsen ══════════════════════════════════════════
-def parse(ls):
-    shots, cur = [], []
-    for l in (ln.strip() for ln in ls):
-        if l.startswith("Shot #"): 
-            if cur: shots.append(pd.DataFrame(cur,columns=["t","x","y"])); cur=[]
-        elif l:
-            p=l.split()
-            if len(p)>=3:
-                try:
-                    t=float(p[0])
-                    x=float(p[1].split('=')[1] if '=' in p[1] else p[1])
-                    y=float(p[2].split('=')[1] if '=' in p[2] else p[2])
-                    cur.append([t,x,y])
-                except: pass
-    if cur: shots.append(pd.DataFrame(cur,columns=["t","x","y"]))
-    return shots
 
 @st.cache_data(show_spinner=False)
 def get_shots(ls): return parse(ls)
