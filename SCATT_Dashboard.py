@@ -460,9 +460,10 @@ if tab_choice == "🎯 Ziel":
                     ))
 
     fig.update_layout(
-        xaxis=dict(autorange=True),
+        xaxis=dict(autorange=True, scaleanchor="y", scaleratio=1),
         yaxis=dict(autorange=True)
     )
+
 
     st.plotly_chart(fig, use_container_width=True,
                     config={'scrollZoom': True, 'displaylogo': False})
