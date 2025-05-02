@@ -351,23 +351,30 @@ if tab_choice == "🎯 Ziel":
                           fillcolor='rgba(255,255,255,0.45)',
                           line_color='white', layer='above')
                 
-                # Timing-Vektoren einblenden
+                # Timing-Vektoren anzeigen
         if show_timing_vecs and "X_Timing" in all_metrics.columns:
-            row = all_metrics.loc[f"Shot {idx+1}"]
-            xtime, ytime = row.get("X_Timing", np.nan), row.get("Y_Timing", np.nan)
-            if pd.notna(xtime) and pd.notna(ytime):
-                # Vektor zur Schussposition
-                fig.add_trace(go.Scatter(x=[xtime, x0_], y=[ytime, y0_],
-                    mode='lines+markers',
-                    line=dict(color='lime', dash='dot'),
-                    marker=dict(size=4),
-                    showlegend=False))
-                # Vektor zum Scheibenzentrum
-                fig.add_trace(go.Scatter(x=[xtime, 0], y=[ytime, 0],
-                    mode='lines+markers',
-                    line=dict(color='orange', dash='dot'),
-                    marker=dict(size=4),
-                    showlegend=False))
+            shot_label = f"Shot {idx+1}"
+            if shot_label in all_metrics.index:
+                row = all_metrics.loc[shot_label]
+                xtime, ytime = row.get("X_Timing", np.nan), row.get("Y_Timing", np.nan)
+                if pd.notna(xtime) and pd.notna(ytime):
+                    # Vektor zum Schusszentrum
+                    fig.add_trace(go.Scatter(
+                        x=[xtime, x0_], y=[ytime, y0_],
+                        mode='lines+markers',
+                        line=dict(color='lime', dash='dot'),
+                        marker=dict(size=4),
+                        showlegend=False
+                    ))
+                    # Vektor zum Scheibenzentrum
+                    fig.add_trace(go.Scatter(
+                        x=[xtime, 0], y=[ytime, 0],
+                        mode='lines+markers',
+                        line=dict(color='orange', dash='dot'),
+                        marker=dict(size=4),
+                        showlegend=False
+                    ))
+
         # Gespeicherten Zoom wiederherstellen
         fig.update_layout(
             xaxis=dict(range=st.session_state.zoom_range["x"]) if st.session_state.zoom_range["x"] else dict(autorange=True),
