@@ -308,7 +308,7 @@ if tab_choice == "🎯 Ziel":
             'recoil': (t0 >= 0) & (t0 <= 0.5),
         }
 
-        phase_segments = {}  # Speichert Segmentdaten
+        phase_segments = {}
         for phase in phase_order:
             if not show_phase[phase]: continue
             mask = phase_masks[phase]
@@ -320,7 +320,6 @@ if tab_choice == "🎯 Ziel":
                                      showlegend=False))
             phase_segments[phase] = (x_seg, y_seg)
 
-        # Verbindung: Letzter Punkt dieser Phase → Erster Punkt der nächsten
         for i in range(len(phase_order) - 1):
             curr = phase_order[i]
             next_ = phase_order[i + 1]
@@ -331,8 +330,7 @@ if tab_choice == "🎯 Ziel":
             x2 = phase_segments[next_][0][-1]
             y2 = phase_segments[next_][1][-1]
             fig.add_trace(go.Scatter(
-                x=[x1, x2],
-                y=[y1, y2],
+                x=[x1, x2], y=[y1, y2],
                 mode='lines',
                 line=dict(width=1, color=phase_col[curr]),
                 showlegend=False
@@ -348,33 +346,36 @@ if tab_choice == "🎯 Ziel":
             x0_, y0_ = xi[idx0], yi[idx0]
             d = PROJECTILE_DIAM[discipline]
             fig.add_shape(type='circle',
-                          x0=x0_ - d / 2, y0=y0_ - d / 2,
-                          x1=x0_ + d / 2, y1=y0_ + d / 2,
+                          x0=x0_ - d/2, y0=y0_ - d/2,
+                          x1=x0_ + d/2, y1=y0_ + d/2,
                           fillcolor='rgba(255,255,255,0.45)',
                           line_color='white', layer='above')
 
-        # Timing-Vektoren anzeigen
-        shot_label = f"Shot {idx+1}"
-        if show_timing_vecs and shot_label in all_metrics.index:
-            row = all_metrics.loc[shot_label]
-            xtime, ytime = row.get("X_Timing", np.nan), row.get("Y_Timing", np.nan)
-            if pd.notna(xtime) and pd.notna(ytime):
-                fig.add_trace(go.Scatter(
-                    x=[xtime, x0_], y=[ytime, y0_],
-                    mode='lines+markers',
-                    line=dict(color='lime', dash='dot'),
-                    marker=dict(size=6),
-                    name=f"{shot_label} ➝ Schuss",
-                    showlegend=False
-                ))
-                fig.add_trace(go.Scatter(
-                    x=[xtime, 0], y=[ytime, 0],
-                    mode='lines+markers',
-                    line=dict(color='orange', dash='dot'),
-                    marker=dict(size=6),
-                    name=f"{shot_label} ➝ Zentrum",
-                    showlegend=False
-                ))
+        # Timing-Vektoren
+        if show_timing_vecs:
+            shot_label = f"Shot {idx+1}"
+            if shot_label in all_metrics.index:
+                row = all_metrics.loc[shot_label]
+                xtime, ytime = row.get("X_Timing", np.nan), row.get("Y_Timing", np.nan)
+                if pd.notna(xtime) and pd.notna(ytime):
+                    # Richtung Schuss
+                    fig.add_trace(go.Scatter(
+                        x=[xtime, x0_], y=[ytime, y0_],
+                        mode='lines+markers',
+                        line=dict(color='lime', dash='dot'),
+                        marker=dict(size=6),
+                        name=f"{shot_label} ➝ Schuss",
+                        showlegend=False
+                    ))
+                    # Richtung Zentrum
+                    fig.add_trace(go.Scatter(
+                        x=[xtime, 0], y=[ytime, 0],
+                        mode='lines+markers',
+                        line=dict(color='orange', dash='dot'),
+                        marker=dict(size=6),
+                        name=f"{shot_label} ➝ Zentrum",
+                        showlegend=False
+                    ))
 
     fig.update_layout(
         xaxis=dict(autorange=True),
