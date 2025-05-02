@@ -326,10 +326,10 @@ if tab_choice == "🎯 Ziel":
             next_ = phase_order[i + 1]
             if curr not in phase_segments or next_ not in phase_segments:
                 continue
-            x1 = phase_segments[curr][0][-1]
-            y1 = phase_segments[curr][1][-1]
-            x2 = phase_segments[next_][0][0]
-            y2 = phase_segments[next_][1][0]
+            x1 = phase_segments[curr][0][0]
+            y1 = phase_segments[curr][1][0]
+            x2 = phase_segments[next_][0][-1]
+            y2 = phase_segments[next_][1][-1]
             fig.add_trace(go.Scatter(
                 x=[x1, x2],
                 y=[y1, y2],
