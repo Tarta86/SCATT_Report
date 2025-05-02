@@ -73,7 +73,7 @@ def load_content(buf: bytes, name: str) -> list[str]:
     return lines
 
 @st.cache_data(show_spinner="Lade Excel …")
-def load_excel(file: bytes) -> list[str]:
+def load_excel(file: bytes) -> tuple[list[str], str | None]:
     # Größtes Tabellenblatt automatisch wählen
     xls = pd.ExcelFile(file)
     sheet_lengths = {sheet: pd.read_excel(file, sheet_name=sheet).shape[0] for sheet in xls.sheet_names}
@@ -100,7 +100,14 @@ def load_excel(file: bytes) -> list[str]:
             lines.append(f"Shot #{nr}")
             for t, x, y in zip(t_vals, x_vals, y_vals):
                 lines.append(f"{t:.3f} {x:.2f} {y:.2f}")
-    return lines
+        # Disziplin extrahieren, falls vorhanden
+    discipline = None
+    if "Disziplin" in df.columns:
+        first_value = df["Disziplin"].dropna().astype(str).iloc[0].strip()
+        discipline = first_value if first_value in disc_list else None
+
+    return lines, discipline
+
 
 
 
@@ -111,8 +118,8 @@ if not up:
 
 try:
     if up.name.lower().endswith(".xlsx"):
-        shots = load_excel(up)
-        lines = ["Excel-Datei geladen"]  # Dummy-Zeile für Kompatibilität
+        lines, discipline_excel = load_excel(up)
+        shots = get_shots(lines)
     else:
         lines = load_content(up.getvalue(), up.name)
         shots = get_shots(lines)
@@ -131,10 +138,15 @@ disc_list = ['10m Air Rifle','50m Rifle','300m Rifle',
              '10m Air Pistol','25m Rapid Fire Pistol','25m Precision Pistol']
 
 if up.name.lower().endswith(".xlsx"):
-    discipline = st.sidebar.selectbox("Disziplin wählen", disc_list)
+    if discipline_excel:
+        discipline = st.sidebar.selectbox("Disziplin wählen", disc_list, index=disc_list.index(discipline_excel))
+    else:
+        discipline = st.sidebar.selectbox("Disziplin wählen", disc_list)
 else:
     m = re.match(r'^([^\(]+)', lines[0])
     discipline = m.group(1).strip() if m and m.group(1).strip() in disc_list else disc_list[0]
+
+
     st.text_area("Erste Zeile", lines[0], height=70)
 
 st.sidebar.success(f"Disziplin: **{discipline}**")
