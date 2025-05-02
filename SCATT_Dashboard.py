@@ -72,19 +72,52 @@ def load_content(buf: bytes, name: str) -> list[str]:
     safe_rm(f_scatt); safe_rm(txt)
     return lines
 
-up = st.file_uploader("SCATT-Datei / TXT", type=["scatt","txt"])
-if not up: st.stop()
-try: lines = load_content(up.getvalue(), up.name)
-except Exception as e: st.error(str(e)); st.stop()
-if not lines: st.error("Datei leer."); st.stop()
+@st.cache_data(show_spinner="Lade Excel …")
+def load_excel(content: bytes) -> list[pd.DataFrame]:
+    df = pd.read_excel(content)
+    required_cols = {'Shot', 't', 'x', 'y'}
+    if not required_cols.issubset(df.columns):
+        raise ValueError(f"Excel muss die Spalten {required_cols} enthalten")
+    
+    shots = [group[['t', 'x', 'y']].reset_index(drop=True) for _, group in df.groupby("Shot")]
+    return shots
+
+
+up = st.file_uploader("SCATT- oder Excel-Datei", type=["scatt", "txt", "xlsx"])
+
+if not up:
+    st.stop()
+
+try:
+    if up.name.lower().endswith(".xlsx"):
+        shots = load_excel(up)
+        lines = ["Excel-Datei geladen"]  # Dummy-Zeile für Kompatibilität
+    else:
+        lines = load_content(up.getvalue(), up.name)
+        shots = get_shots(lines)
+except Exception as e:
+    st.error(str(e))
+    st.stop()
+
+
+if not shots:
+    st.error("Keine Schüsse erkannt.")
+    st.stop()
+
 
 # ═══════════════════ Disziplin erkennen ════════════════════════════════════
 disc_list = ['10m Air Rifle','50m Rifle','300m Rifle',
              '10m Air Pistol','25m Rapid Fire Pistol','25m Precision Pistol']
-m = re.match(r'^([^\(]+)', lines[0]); discipline = m.group(1).strip() \
-          if m and m.group(1).strip() in disc_list else disc_list[0]
+
+if up.name.lower().endswith(".xlsx"):
+    discipline = st.sidebar.selectbox("Disziplin wählen", disc_list)
+else:
+    m = re.match(r'^([^\(]+)', lines[0])
+    discipline = m.group(1).strip() if m and m.group(1).strip() in disc_list else disc_list[0]
+    st.text_area("Erste Zeile", lines[0], height=70)
+
 st.sidebar.success(f"Disziplin: **{discipline}**")
-st.text_area("Erste Zeile", lines[0], height=70)
+
 
 # ═══════════════════ Auswahl-Umschalter (statt Tabs) ═══════════════════════
 tab_choice = st.radio("Ansicht wählen",
