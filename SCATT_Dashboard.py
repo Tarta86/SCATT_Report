@@ -99,7 +99,7 @@ def load_excel(file: bytes) -> tuple[list[str], str | None]:
             y_vals = df[col_y].to_numpy()
             lines.append(f"Shot #{nr}")
             for t, x, y in zip(t_vals, x_vals, y_vals):
-                lines.append(f"{t:.3f} {x:.2f} {y:.2f}")
+                lines.append(f"{t:.3f} x={x:.2f} y={y:.2f}")
         # Disziplin extrahieren, falls vorhanden
     discipline = None
     if "Disziplin" in df.columns:
