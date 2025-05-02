@@ -227,9 +227,9 @@ mask_hold = (t0>=start_hold)&(t0<=-0.2)
 st.sidebar.markdown("### Phasen anzeigen")
 show_phase={k:st.sidebar.checkbox(k.title(),True) for k in
             ['approach','hold','release','recoil']}
-show_avg = st.sidebar.checkbox("Ø Aiming-Punkt",True)
-show_virtual = st.sidebar.checkbox("Virtueller Schuss",True)
-show_timing_vecs = st.sidebar.checkbox("Timing-Vektoren anzeigen", True)
+show_avg = st.sidebar.checkbox("Ø Aiming-Point",True)
+show_virtual = st.sidebar.checkbox("Virtuel Shot Location",True)
+show_timing_vecs = st.sidebar.checkbox("Timing-Vector", True)
 
 
 # ═══════════════════ Metriken berechnen ════════════════════════════════════
