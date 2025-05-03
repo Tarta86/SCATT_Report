@@ -233,9 +233,7 @@ xbias,ybias=bias(shots)
 
 # ═══════════════════ Sidebar-Einstellungen ═════════════════════════════════
 min_t=min(s['t'].min() for s in shots)
-start_hold = st.sidebar.slider("Start Hold-Phase (s)", 
-                               float(round(max(-15,min_t),2)),
-                               -0.25, value=-1.0, step=0.01)
+start_hold = st.sidebar.slider("Haltedauer wählen",float(round(max(-15,min_t),2)),-0.25, value=-1.0, step=0.01)
 mask_hold = (t0>=start_hold)&(t0<=-0.2)
 
 st.sidebar.markdown("### Komponenten anzeigen")
@@ -244,7 +242,7 @@ st.sidebar.markdown("### Komponenten anzeigen")
 show_phase = {k: st.sidebar.checkbox(f"Phase { k.title() }", True)
               for k in ['approach', 'hold', 'release', 'recoil']}
 
-st.sidebar.markdown("—Stabilitätsanforderungen—")
+st.sidebar.markdown("### Variablen Zeichnungen")
 show_10a0 = st.sidebar.checkbox("10,0‑Ring‑Kreis (10a0)", False)
 show_10a5 = st.sidebar.checkbox("10,5‑Ring‑Kreis (10a5)", False)
 show_9a0  = st.sidebar.checkbox("9,0‑Ring‑Kreis  (9a0)",  False)
@@ -260,7 +258,7 @@ def metrics(sh, st_hold):
     """
     Berechnet pro Schuss:
       • Aiming_Error, Trigger_Error, Stability, Hold_Speed,
-        Timing_Angle, Center_Distance, Score
+        Timing_Angle, Result_Radial_Distance, Result
       • Timing‑Koordinaten (X_Timing, Y_Timing) – 50 ms vor dem Schuss
       • NEU: 10a0, 10a5, 9a0  – %‑Anteil Hold‑Punkte innerhalb
         eines Kreises um den Ø‑Aiming‑Point
@@ -352,13 +350,13 @@ def metrics(sh, st_hold):
             Stability=stab,
             Hold_Speed=hold_speed,
             Timing_Angle=timing_angle,
-            Center_Distance=dist,
-            Score=score,
             X_Timing=xtime,
             Y_Timing=ytime,
             tena0=pct_10a0,
             tena5=pct_10a5,
             ninea0=pct_9a0,
+            Result=score,            
+            Result_Radial_Distance=dist
         ))
 
     df = pd.DataFrame(rows)
@@ -380,10 +378,25 @@ def metrics(sh, st_hold):
 # --------------------------------------------------------------------------
 all_metrics = metrics(shots, start_hold)
 
+# =========== Einheiten‑Mapping direkt HINTER dieser Zeile einfügen =========
+unit_of = {
+    "Aiming_Error":    "mm",
+    "Trigger_Error":   "mm",
+    "Stability":       "mm²",
+    "Hold_Speed":      "mm/s",
+    "Timing_Angle":    "°",
+    "Result_Radial_Distance": "mm",
+    "Result":           "",
+    "tena0":            "%",
+    "tena5":            "%",
+    "ninea0":             "%",
+    "X_Timing":        "mm",
+    "Y_Timing":        "mm",
+}
 
 
 # ═══════════════════ Checkbox-Filter Tabelle ═══════════════════════════════
-st.sidebar.markdown("### Tabelle filtern")
+st.sidebar.markdown("### Filter")
 valid_labels=[str(x) for x in all_metrics.index if pd.notna(x)]
 chosen=[]
 for i,l in enumerate(valid_labels):
@@ -438,7 +451,7 @@ if tab_choice == "🎯 Ziel":
     phase_col   = {"approach": "green", "hold": "yellow",
                    "release":  "blue",  "recoil": "red"}
     phase_order = ["approach", "hold", "release", "recoil"]
-    
+
     r10   = TEN_RING_DIAM[discipline] / 2
     rproj = PROJECTILE_DIAM[discipline] / 2
     pen   = (r10 + rproj) / 10
@@ -663,7 +676,7 @@ elif tab_choice == "📊 Gruppenvergleich":
             assigned.update(sel)
 
     # Feature-Auswahl
-    feature_options = all_metrics.columns.tolist()
+    feature_options = [c for c in all_metrics.columns if c not in ("X_Timing", "Y_Timing")]
     feature_choice = st.selectbox("Feature wählen", feature_options)
 
     # Gruppenzugehörigkeit speichern
@@ -719,41 +732,76 @@ elif tab_choice == "📊 Gruppenvergleich":
 st.divider()
 color_coded = st.toggle("🔁 Farbcodierte Darstellung", value=False)
 
-ampel_cols = ["Aiming_Error", "Trigger_Error", "Stability", "Center_Distance", "Hold_Speed", "Timing_Angle"]
+ampel_cols = ["Aiming_Error", "Trigger_Error", "Stability", "Result_Radial_Distance", "Hold_Speed", "Timing_Angle", "tena0", "tena5", "ninea0"]
 
-# Terzil-basierte Farbzuweisung
+# Terzil‑basierte Farbzuweisung -------------------------------------------
 def ampelformat_colors(df, cols):
     styles = pd.DataFrame('', index=df.index, columns=df.columns)
+
+    # Spalten, bei denen hohe Werte gut sind  →  Farben umdrehen
+    invert_cols = {"tena0", "tena5", "ninea0"}
+
     for col in cols:
-        if col not in df.columns: continue
+        if col not in df.columns:
+            continue
         values = df[col].dropna()
-        if len(values) < 3: continue
+        if len(values) < 3:
+            continue
 
         q1, q2 = values.quantile([1/3, 2/3])
 
         for idx in df.index:
             val = df.loc[idx, col]
-            if pd.isna(val): continue
-            if val <= q1:
-                styles.loc[idx, col] = 'background-color: #d4edda'     # grün
-            elif val <= q2:
-                styles.loc[idx, col] = 'background-color: #fff3cd'     # gelb
+            if pd.isna(val):
+                continue
+
+            # Farb‑Logik je nach Richtung --------------------------------
+            if col in invert_cols:
+                # groß = grün, klein = rot
+                if val >= q2:
+                    styles.loc[idx, col] = 'background-color: #d4edda'   # grün
+                elif val >= q1:
+                    styles.loc[idx, col] = 'background-color: #fff3cd'   # gelb
+                else:
+                    styles.loc[idx, col] = 'background-color: #f8d7da'   # rot
             else:
-                styles.loc[idx, col] = 'background-color: #f8d7da'     # rot
+                # klein = grün, groß = rot  (bisheriges Verhalten)
+                if val <= q1:
+                    styles.loc[idx, col] = 'background-color: #d4edda'   # grün
+                elif val <= q2:
+                    styles.loc[idx, col] = 'background-color: #fff3cd'   # gelb
+                else:
+                    styles.loc[idx, col] = 'background-color: #f8d7da'   # rot
+
     return styles
 
+# ── 1)  Arbeits‑Copy ------------------------------------------------------
 df_disp = all_metrics.loc[display_rows].copy()
-df_disp[ampel_cols] = df_disp[ampel_cols].applymap(lambda x: round(x, 2) if pd.notna(x) else "")
+df_disp = df_disp.drop(columns=["X_Timing", "Y_Timing"], errors="ignore")
 
+df_disp[ampel_cols] = df_disp[ampel_cols].applymap(
+    lambda x: round(x, 2) if pd.notna(x) else "")
+
+# ── 2)  Ampel‑Styles auf Original‑Header rechnen --------------------------
+styles = ampelformat_colors(df_disp, ampel_cols)
+
+# ── 3)  Spaltennamen mit Einheit ergänzen ---------------------------------
+rename_map = {c: f"{c} ({unit_of[c]})"
+              for c in df_disp.columns if c in unit_of and unit_of[c]}
+df_disp_view = df_disp.rename(columns=rename_map)
+
+# ── 4)  Styles auf neue Header übertragen ---------------------------------
+styles.index  = df_disp_view.index
+styles.columns = df_disp_view.columns
+
+# ── 5)  Anzeigen ----------------------------------------------------------
 if color_coded:
-    st.subheader("📋 Metriken-Tabelle (Ampelsystem)")
-    styles = ampelformat_colors(df_disp, ampel_cols)
+    st.subheader("📋 Metriken‑Tabelle (Ampelsystem)")
     st.dataframe(
-        df_disp.style
+        df_disp_view.style
             .apply(lambda _: styles, axis=None)
             .format(precision=2),
-        use_container_width=True
-    )
+        use_container_width=True)
 else:
-    st.subheader("📋 Metriken-Tabelle (Rohwerte)")
-    st.dataframe(df_disp, use_container_width=True)
+    st.subheader("📋 Metriken‑Tabelle (Rohwerte)")
+    st.dataframe(df_disp_view, use_container_width=True)
