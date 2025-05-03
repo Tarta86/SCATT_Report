@@ -892,8 +892,6 @@ if color_coded:
 else:
     styled_df = df_final.style.apply(bold_mean_std, axis=None)
 
-st.subheader("📋 Metriken-Tabelle mit Mittelwert und Standardabweichung")
-st.dataframe(styled_df, use_container_width=True)
 
 # ── 4)  Styles auf neue Header übertragen ---------------------------------
 styles_renamed = styles.rename(columns=rename_map)
