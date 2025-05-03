@@ -15,6 +15,25 @@ if "zoom_range" not in st.session_state:
     st.session_state.zoom_range = {"x": None, "y": None}
 
 # ═══════════════════ Hilfs‑Funktionen ═══════════════════════════════════════
+def best_sway_angle(dx, dy, valid_mask):
+    """
+    Finde den Winkel (Radiant) der Linie durch (0,0), die den
+    mittleren orthogonalen Abstand der Punkte (dx,dy) minimiert.
+    dx, dy: 1‑D‑Arrays der auf den AAP zentrierten Punkte
+    valid_mask: Bool‑Array, True = Punkt ist gültig
+    """
+    angles = np.linspace(-np.pi/2, np.pi/2, 181)   # ‑90° … +90°, 1°‑Schritte
+    best_ang, best_mean = 0.0, np.inf
+
+    # |v|=1 → v = (cos(a), sin(a)); Abstand = |v × p|
+    for a in angles:
+        vx, vy = np.cos(a), np.sin(a)
+        dist = np.abs(vx*dy[valid_mask] - vy*dx[valid_mask])
+        mean_d = np.nanmean(dist)
+        if mean_d < best_mean:
+            best_mean, best_ang = mean_d, a
+
+    return best_ang, best_mean         # Winkel, mittlerer Abstand
 
 def draw_target_plotly(disc: str) -> go.Figure:
     specs_map = {
@@ -243,61 +262,83 @@ show_phase = {k: st.sidebar.checkbox(f"Phase { k.title() }", True)
               for k in ['approach', 'hold', 'release', 'recoil']}
 
 st.sidebar.markdown("### Variablen Zeichnungen")
-show_10a0 = st.sidebar.checkbox("10,0‑Ring‑Kreis (10a0)", False)
-show_10a5 = st.sidebar.checkbox("10,5‑Ring‑Kreis (10a5)", False)
-show_9a0  = st.sidebar.checkbox("9,0‑Ring‑Kreis  (9a0)",  False)
-
+show_sway_line = st.sidebar.checkbox("Approach‑Sway‑Linie", True)
+show_10a0 = st.sidebar.checkbox("10,0‑Ring‑Kreis (10a0)", True)
+show_10a5 = st.sidebar.checkbox("10,5‑Ring‑Kreis (10a5)", True)
+show_9a0  = st.sidebar.checkbox("9,0‑Ring‑Kreis  (9a0)",  True)
 show_avg = st.sidebar.checkbox("Ø Aiming-Point",True)
-show_virtual = st.sidebar.checkbox("Virtuel Shot Location",True)
 show_timing_vecs = st.sidebar.checkbox("Timing-Vector", True)
-
+show_virtual = st.sidebar.checkbox("Virtuel Shot Location",True)
 
 # ═══════════════════ Metriken berechnen ════════════════════════════════════
 @st.cache_data(show_spinner="Berechne Metriken…")
 def metrics(sh, st_hold):
     """
     Berechnet pro Schuss:
-      • Aiming_Error, Trigger_Error, Stability, Hold_Speed,
-        Timing_Angle, Result_Radial_Distance, Result
-      • Timing‑Koordinaten (X_Timing, Y_Timing) – 50 ms vor dem Schuss
-      • NEU: 10a0, 10a5, 9a0  – %‑Anteil Hold‑Punkte innerhalb
-        eines Kreises um den Ø‑Aiming‑Point
+      • Approach_Sway: mittlerer Abstand der Approach-Punkte zur Linie
+        zwischen Approach-Schwerpunkt und AAP
+      • Sway_Angle: Winkel dieser Linie
+      • alle bisherigen Kennzahlen (Aiming_Error, Trigger_Error, …)
+      • Timing-Koordinaten (X_Timing, Y_Timing)
+      • tena0, tena5, ninea0
     """
-    # -------- Vorarbeit ---------------------------------------------------
+    # Phasen-Masken
     mask_hold = (t0 >= st_hold) & (t0 <= -0.2)
+    mask_appr = (t0 < st_hold)
 
-    xi_all, yi_all = [], []
+    # Bias-Korrektur vorbereiten
+    xi_all = []
+    yi_all = []
     for s in sh:
         ts = s.sort_values("t")
-        xi_all.append(np.interp(t0, ts["t"], ts["x"]) - xbias)
+        xi_all.append(np.interp(t0, ts["t"], ts["x"],left=np.nan, right=np.nan) - xbias)        
         y_vals = -ts["y"] if invert_y else ts["y"]
-        yi_all.append(np.interp(t0, ts["t"], y_vals) - ybias)
-    xi_all, yi_all = np.array(xi_all), np.array(yi_all)
+        yi_all.append(np.interp(t0, ts["t"], y_vals, left=np.nan, right=np.nan) - ybias)
+    xi_all = np.array(xi_all)
+    yi_all = np.array(yi_all)
 
-    # Radien in mm für 10,0‑ / 10,5‑ / 9,0‑Ring
+    # Ringe
     r10   = TEN_RING_DIAM[discipline] / 2
     rproj = PROJECTILE_DIAM[discipline] / 2
-    pen   = (r10 + rproj) / 10      # Distanz pro 0,1 Ring
+    pen   = (r10 + rproj) / 10
+    r_10a0 = r10
+    r_10a5 = 5 * pen
+    r_9a0  = 20 * pen
 
-    r_10a0 = r10            # 10,0‑Ring‑Radius
-    r_10a5 = 5  * pen       # 10,5‑Ring‑Radius (5 × 0,1)
-    r_9a0  = 20 * pen       # 9,0‑Ring‑Radius (20 × 0,1)
+    timing_idx_fixed = np.argmin(np.abs(t0 - (-0.05)))   # 50 ms vor Schuss
 
-    timing_idx_fixed = np.argmin(np.abs(t0 - (-0.05)))   # 50 ms vor Schuss
     rows = []
-
-    # -------- Schleife über alle Schüsse ----------------------------------
     for i in range(len(sh)):
-        # Ø‑Aiming‑Point in Hold
+        # --- Ø-Aiming-Point (AAP) in Hold ----------------------------
         xm = np.nanmean(xi_all[i, mask_hold])
         ym = np.nanmean(yi_all[i, mask_hold])
 
-        # Distanz Hold‑Punkte zu (xm, ym)
+        # --- Approach-Schwerpunkt -----------------------------------
+        x_mean_ap = np.nanmean(xi_all[i, mask_appr])
+        y_mean_ap = np.nanmean(yi_all[i, mask_appr])
+
+        # --- Abstände für Approach_Sway -----------------------------
+        dx_ap_rel = xi_all[i, mask_appr] - x_mean_ap
+        dy_ap_rel = yi_all[i, mask_appr] - y_mean_ap
+        valid_ap = np.isfinite(dx_ap_rel) & np.isfinite(dy_ap_rel)
+
+        # Richtungsvektor von Approach-Schwerpunkt → AAP
+        vx, vy = xm - x_mean_ap, ym - y_mean_ap
+        norm_v = math.hypot(vx, vy)
+
+        if valid_ap.sum() > 0 and norm_v > 0:
+            # orthogonaler Abstand aller Punkte zur Linie
+            dist = np.abs(vx * dy_ap_rel - vy * dx_ap_rel) / norm_v
+            sway = np.nanmean(dist[valid_ap])
+            ang  = math.atan2(vy, vx)   # Radiant
+        else:
+            sway, ang = np.nan, 0.0
+
+        # --- Distanz-Statistiken der Hold-Punkte -------------------
         dx = xi_all[i, mask_hold] - xm
         dy = yi_all[i, mask_hold] - ym
         d_hold = np.sqrt(dx**2 + dy**2)
-        valid  = np.isfinite(d_hold)
-
+        valid = np.isfinite(d_hold)
         if valid.any():
             total = valid.sum()
             pct_10a0 = 100 * (d_hold[valid] <= r_10a0).sum() / total
@@ -306,74 +347,69 @@ def metrics(sh, st_hold):
         else:
             pct_10a0 = pct_10a5 = pct_9a0 = np.nan
 
-        # klassische Kennzahlen -------------------------------------------
-        x0, y0 = xi_all[i, idx0], yi_all[i, idx0]              # Schusspunkt
-        aiming   = math.hypot(xm, ym)                          # Aiming‑Error
-        trigger  = math.hypot(xm - x0, ym - y0)                # Trigger‑Error
+        # --- klassische Kennzahlen ----------------------------------
+        x0, y0 = xi_all[i, idx0], yi_all[i, idx0]
+        aiming  = math.hypot(xm, ym)
+        trigger = math.hypot(xm - x0, ym - y0)
 
         mx, my = xi_all[i, mask_hold], yi_all[i, mask_hold]
         stab = np.nan
         if np.isfinite(mx).sum() > 1 and np.isfinite(my).sum() > 1:
             cov = np.cov(mx, my)
             if np.all(np.isfinite(cov)):
-                ev   = np.linalg.eigvals(cov)
+                ev = np.linalg.eigvals(cov)
                 stab = math.pi * 5.991 * math.sqrt(ev.max() * ev.min())
 
-        dist  = math.hypot(x0, y0)                             # Distanz Zentrum
-        score = round(issf_score(dist, discipline), 1)         # ISSF‑Score
+        dist_center = math.hypot(x0, y0)
+        score = round(issf_score(dist_center, discipline), 1)
 
-        vx = np.gradient(xi_all[i], t0)                        # Geschwindigkeit
-        vy = np.gradient(yi_all[i], t0)
-        speed       = np.sqrt(vx**2 + vy**2)
-        speed_hold  = speed[mask_hold]
-        hold_speed  = np.nanmean(speed_hold) if np.isfinite(speed_hold).any() else np.nan
+        vx_t = np.gradient(xi_all[i], t0)
+        vy_t = np.gradient(yi_all[i], t0)
+        speed = np.sqrt(vx_t**2 + vy_t**2)
+        speed_hold = speed[mask_hold]
+        hold_speed = np.nanmean(speed_hold) if np.isfinite(speed_hold).any() else np.nan
 
-        # Timing‑Koordinaten & Winkel
-        xtime = xi_all[i][timing_idx_fixed]
-        ytime = yi_all[i][timing_idx_fixed]
-
-        v1 = np.array([x0 - xtime, y0 - ytime])  # zum Schuss
-        v2 = np.array([-xtime, -ytime])          # zum Mittelpunkt
+        # --- Timing-Koord. -----------------------------------------
+        xtime = xi_all[i, timing_idx_fixed]
+        ytime = yi_all[i, timing_idx_fixed]
+        v1 = np.array([x0 - xtime, y0 - ytime])
+        v2 = np.array([-xtime, -ytime])
         dot = np.dot(v1, v2)
         norm_prod = np.linalg.norm(v1) * np.linalg.norm(v2)
-        if norm_prod == 0:
-            timing_angle = np.nan
-        else:
-            timing_angle = math.degrees(
-                math.acos(np.clip(dot / norm_prod, -1.0, 1.0)))
+        timing_angle = (math.degrees(math.acos(np.clip(dot / norm_prod, -1.0, 1.0)))
+                        if norm_prod else np.nan)
 
-        # -------- Zeile zusammenstellen -----------------------------------
+        # --- Zeile zusammenstellen ---------------------------------
         rows.append(dict(
-            Shot=f"Shot {i+1}",
-            Aiming_Error=aiming,
-            Trigger_Error=trigger,
-            Stability=stab,
-            Hold_Speed=hold_speed,
-            Timing_Angle=timing_angle,
-            X_Timing=xtime,
-            Y_Timing=ytime,
-            tena0=pct_10a0,
-            tena5=pct_10a5,
-            ninea0=pct_9a0,
-            Result=score,            
-            Result_Radial_Distance=dist
+            Shot              = f"Shot {i+1}",
+            Approach_Sway     = sway,
+            Sway_Angle        = ang,
+            Aiming_Error      = aiming,
+            Trigger_Error     = trigger,
+            Stability         = stab,
+            Hold_Speed        = hold_speed,
+            Timing_Angle      = timing_angle,
+            Result_Radial_Distance   = dist_center,
+            Result             = score,
+            X_Timing          = xtime,
+            Y_Timing          = ytime,
+            tena0             = pct_10a0,
+            tena5             = pct_10a5,
+            ninea0            = pct_9a0,
         ))
 
+    # Serien- und Overall-Zeilen
     df = pd.DataFrame(rows)
-
-    # -------- Serien‑ und Overall‑Zeilen ----------------------------------
     series = []
     n = len(df)
     for s in range((n + 9) // 10):
-        m = df.iloc[s * 10:(s + 1) * 10].mean(numeric_only=True)
-        m["Shot"] = f"Series {s + 1}"
+        m = df.iloc[s*10:(s+1)*10].mean(numeric_only=True)
+        m["Shot"] = f"Series {s+1}"
         series.append(m)
-
     overall = df.mean(numeric_only=True)
     overall["Shot"] = "Overall"
 
-    return (pd.concat([df] + series + [overall], ignore_index=True)
-              .set_index("Shot"))
+    return pd.concat([df] + series + [overall], ignore_index=True).set_index("Shot")
 
 # --------------------------------------------------------------------------
 all_metrics = metrics(shots, start_hold)
@@ -385,13 +421,14 @@ unit_of = {
     "Stability":       "mm²",
     "Hold_Speed":      "mm/s",
     "Timing_Angle":    "°",
-    "Result_Radial_Distance": "mm",
+    "Result_Radial_Distance": "mm",   # <-- ebenfalls umbennen
     "Result":           "",
     "tena0":            "%",
     "tena5":            "%",
-    "ninea0":             "%",
+    "ninea0":            "%",
     "X_Timing":        "mm",
     "Y_Timing":        "mm",
+    "Approach_Sway":   "mm",
 }
 
 
@@ -449,7 +486,7 @@ if tab_choice == "🎯 Ziel":
 
     # Farben & Phasen‑Reihenfolge
     phase_col   = {"approach": "green", "hold": "yellow",
-                   "release":  "blue",  "recoil": "red"}
+                   "release": "blue",   "recoil": "red"}
     phase_order = ["approach", "hold", "release", "recoil"]
 
     r10   = TEN_RING_DIAM[discipline] / 2
@@ -458,28 +495,29 @@ if tab_choice == "🎯 Ziel":
     r_10a0, r_10a5, r_9a0 = r10, 5*pen, 20*pen
 
     for idx in sel_idx:
-        # Trajektorie des gewählten Schusses – bias‑korrigiert
+        shot_label = f"Shot {idx+1}"        # ← NEU
+      # Trajektorie des Schusses – bias‑korrigiert
         xi = np.interp(t0, shots[idx]["t"], shots[idx]["x"]) - xbias
         yi = np.interp(
             t0, shots[idx]["t"],
             (-shots[idx]["y"] if invert_y else shots[idx]["y"])) - ybias
 
-        # Phasen‑Masken
+        # Phasen‑Masken ----------------------------------------------------
         phase_masks = {
-            "approach":  t0 <  start_hold,
-            "hold":     (t0 >= start_hold) & (t0 < -0.2),
-            "release":  (t0 >= -0.2)      & (t0 <  0.0),
-            "recoil":   (t0 >=  0.0)      & (t0 <= 0.5),
+            "approach": t0 <  start_hold,
+            "hold":    (t0 >= start_hold) & (t0 < -0.2),
+            "release": (t0 >= -0.2)      & (t0 <  0.0),
+            "recoil":  (t0 >=  0.0)      & (t0 <= 0.5),
         }
 
-        # 1) Kurven je Phase
+        # 1) Kurven je Phase ----------------------------------------------
         phase_segments = {}
         for ph in phase_order:
             if not show_phase[ph]:
                 continue
             mask = phase_masks[ph]
             x_seg, y_seg = xi[mask], yi[mask]
-            if len(x_seg) == 0:
+            if x_seg.size == 0:
                 continue
             fig.add_trace(go.Scatter(
                 x=x_seg, y=y_seg, mode="lines",
@@ -487,7 +525,7 @@ if tab_choice == "🎯 Ziel":
                 showlegend=False))
             phase_segments[ph] = (x_seg, y_seg)
 
-        # 2) dünne Übergangslinien
+        # 2) dünne Übergangslinien ----------------------------------------
         for a, b in zip(phase_order[:-1], phase_order[1:]):
             if a in phase_segments and b in phase_segments:
                 fig.add_trace(go.Scatter(
@@ -497,18 +535,43 @@ if tab_choice == "🎯 Ziel":
                     line=dict(width=1, color=phase_col[a]),
                     showlegend=False))
 
-        # 3) Ø‑Aiming‑Point
-        if show_avg:
-            xm = np.nanmean(xi[mask_hold])
-            ym = np.nanmean(yi[mask_hold])
+        # 3) Ø‑Aiming‑Point ----------------------------------------------
+        xm = np.nanmean(xi[phase_masks["hold"]])
+        ym = np.nanmean(yi[phase_masks["hold"]])
+        if show_avg and pd.notna(xm) and pd.notna(ym):
             fig.add_trace(go.Scatter(
                 x=[xm], y=[ym], mode="markers",
                 marker=dict(symbol="x", size=16, color="yellow"),
                 showlegend=False))
 
-        # 4) Virtueller Schuss & Timing‑Vektoren
-        if show_virtual or show_timing_vecs:
-            x0_, y0_ = xi[idx0], yi[idx0]
+        # 4) Approach‑Sway‑Linie ------------------------------------------
+        if show_sway_line and shot_label in all_metrics.index:
+            ang = all_metrics.loc[shot_label, "Sway_Angle"]
+            if pd.notna(ang):
+                vx, vy = np.cos(ang), np.sin(ang)
+
+                # Länge L wie gehabt
+                mask_appr = t0 < start_hold
+                dx_ap = xi[mask_appr] - xm
+                dy_ap = yi[mask_appr] - ym
+                valid = np.isfinite(dx_ap) & np.isfinite(dy_ap)
+                L = np.max(np.sqrt(dx_ap[valid]**2 + dy_ap[valid]**2)) * 1.2
+
+                x_line = xm + np.array([-L, L]) * vx
+                y_line = ym + np.array([-L, L]) * vy
+
+                fig.add_trace(go.Scatter(
+                    x=x_line, y=y_line, mode="lines",
+                    line=dict(color="cyan", width=2, dash="dash"),
+                    showlegend=False))
+                
+                x_mean_ap = np.nanmean(xi[mask_appr])
+                y_mean_ap = np.nanmean(yi[mask_appr])
+
+           
+
+        # 5) Virtueller Schuss & Timing‑Vektoren --------------------------
+        x0_, y0_ = xi[idx0], yi[idx0]
 
         if show_virtual:
             d = PROJECTILE_DIAM[discipline]
@@ -517,10 +580,10 @@ if tab_choice == "🎯 Ziel":
                           x1=x0_ + d/2, y1=y0_ + d/2,
                           fillcolor="rgba(255,255,255,0.45)",
                           line_color="white", layer="above")
-            
-        # 4 b) Zielringe um den Ø‑Aiming‑Point
+
+        # 6) Zielringe um den AAP -----------------------------------------
         ring_specs = [
-            (show_10a0, r_10a0, "rgba(0,255,0,0.25)"),   # Grün transparent
+            (show_10a0, r_10a0, "rgba(0,255,0,0.25)"),   # Grün
             (show_10a5, r_10a5, "rgba(255,255,0,0.25)"), # Gelb
             (show_9a0,  r_9a0,  "rgba(255,0,0,0.20)"),   # Rot
         ]
@@ -531,8 +594,7 @@ if tab_choice == "🎯 Ziel":
                     x0=xm - radius, y0=ym - radius,
                     x1=xm + radius, y1=ym + radius,
                     line=dict(color=color.replace("0.25", "1.0"), width=1),
-                    fillcolor=color,
-                    layer="above")
+                    fillcolor=color, layer="above")
 
         if show_timing_vecs:
             shot_label = f"Shot {idx+1}"
@@ -552,7 +614,7 @@ if tab_choice == "🎯 Ziel":
                         marker=dict(size=6),
                         showlegend=False))
 
-    # Achsen fixieren & Plot anzeigen
+    # Achsen fixieren & Plot anzeigen -------------------------------------
     fig.update_layout(
         xaxis=dict(autorange=True, scaleanchor="y", scaleratio=1),
         yaxis=dict(autorange=True))
@@ -560,8 +622,6 @@ if tab_choice == "🎯 Ziel":
     st.plotly_chart(
         fig, use_container_width=True,
         config={"scrollZoom": True, "displaylogo": False})
-
-
 
 
 
@@ -732,7 +792,18 @@ elif tab_choice == "📊 Gruppenvergleich":
 st.divider()
 color_coded = st.toggle("🔁 Farbcodierte Darstellung", value=False)
 
-ampel_cols = ["Aiming_Error", "Trigger_Error", "Stability", "Result_Radial_Distance", "Hold_Speed", "Timing_Angle", "tena0", "tena5", "ninea0"]
+ampel_cols = [
+    "Approach_Sway",
+    "Aiming_Error",
+    "Trigger_Error",
+    "Stability",
+    "Result_Radial_Distance",   # <-- hier angepasst
+    "Hold_Speed",
+    "Timing_Angle",
+    "tena0",
+    "tena5",
+    "ninea0"
+]
 
 # Terzil‑basierte Farbzuweisung -------------------------------------------
 def ampelformat_colors(df, cols):
@@ -777,7 +848,7 @@ def ampelformat_colors(df, cols):
 
 # ── 1)  Arbeits‑Copy ------------------------------------------------------
 df_disp = all_metrics.loc[display_rows].copy()
-df_disp = df_disp.drop(columns=["X_Timing", "Y_Timing"], errors="ignore")
+df_disp = df_disp.drop(columns=["X_Timing", "Y_Timing", "Sway_Angle"], errors="ignore")
 
 df_disp[ampel_cols] = df_disp[ampel_cols].applymap(
     lambda x: round(x, 2) if pd.notna(x) else "")
