@@ -385,17 +385,17 @@ def metrics(sh, st_hold):
             Approach_Sway     = sway,
             Sway_Angle        = ang,
             Aiming_Error      = aiming,
-            Trigger_Error     = trigger,
-            Stability         = stab,
-            Hold_Speed        = hold_speed,
-            Timing_Angle      = timing_angle,
-            Result_Radial_Distance   = dist_center,
-            Result             = score,
-            X_Timing          = xtime,
-            Y_Timing          = ytime,
             tena0             = pct_10a0,
             tena5             = pct_10a5,
             ninea0            = pct_9a0,
+            Stability         = stab,
+            Hold_Speed        = hold_speed,
+            Trigger_Error     = trigger,
+            Timing_Angle      = timing_angle,
+            Result             = score,
+            Result_Radial_Distance   = dist_center,
+            X_Timing          = xtime,
+            Y_Timing          = ytime,
         ))
 
     # Serien- und Overall-Zeilen
@@ -861,18 +861,67 @@ rename_map = {c: f"{c} ({unit_of[c]})"
               for c in df_disp.columns if c in unit_of and unit_of[c]}
 df_disp_view = df_disp.rename(columns=rename_map)
 
+# Berechnung von Mittelwert und Standardabweichung
+mean_std_row = df_disp_view.apply(pd.to_numeric, errors='coerce').agg(['mean', 'std']).T
+mean_std_row['mean_std'] = mean_std_row.apply(
+    lambda row: f"{row['mean']:.2f} ± {row['std']:.2f}" if pd.notnull(row['mean']) else "", axis=1)
+
+# Neue DataFrame-Zeile mit Mittelwert/Std
+mean_std_df = pd.DataFrame([mean_std_row['mean_std'].to_dict()], index=["Ø ± SD"])
+
+# Verbinden der Mittelwert-Zeile mit den Einzelschüssen
+df_final = pd.concat([mean_std_df, df_disp_view])
+
+# Funktion zum Stylen der ersten Zeile fett
+def bold_mean_std(df):
+    styles_df = pd.DataFrame('', index=df.index, columns=df.columns)
+    styles_df.loc["Ø ± SD", :] = 'font-weight: bold'
+    return styles_df
+
+# Erstellen von styles_extended mit den exakten Spaltennamen von df_final
+if color_coded:
+    # Styles-DataFrame für die Farbgebung neu erzeugen, exakt passend zu df_final
+    styles_renamed = styles.rename(columns=rename_map)
+    styles_extended = pd.concat([
+        pd.DataFrame('', index=["Ø ± SD"], columns=df_final.columns),
+        styles_renamed
+    ]).reindex(df_final.index)
+
+    styled_df = df_final.style \
+        .apply(lambda _: styles_extended, axis=None) \
+        .apply(bold_mean_std, axis=None)
+else:
+    styled_df = df_final.style.apply(bold_mean_std, axis=None)
+
+st.subheader("📋 Metriken-Tabelle mit Mittelwert und Standardabweichung")
+st.dataframe(styled_df, use_container_width=True)
+
 # ── 4)  Styles auf neue Header übertragen ---------------------------------
-styles.index  = df_disp_view.index
-styles.columns = df_disp_view.columns
+styles_renamed = styles.rename(columns=rename_map)
+styles_extended = pd.concat([
+    pd.DataFrame('', index=["Ø ± SD"], columns=df_final.columns),
+    styles_renamed
+]).reindex(df_final.index)
 
 # ── 5)  Anzeigen ----------------------------------------------------------
+def bold_mean_std(df):
+    styles_df = pd.DataFrame('', index=df.index, columns=df.columns)
+    styles_df.loc["Ø ± SD", :] = 'font-weight: bold'
+    return styles_df
+
 if color_coded:
     st.subheader("📋 Metriken‑Tabelle (Ampelsystem)")
     st.dataframe(
-        df_disp_view.style
-            .apply(lambda _: styles, axis=None)
+        df_final.style
+            .apply(lambda _: styles_extended, axis=None)
+            .apply(bold_mean_std, axis=None)
             .format(precision=2),
         use_container_width=True)
 else:
     st.subheader("📋 Metriken‑Tabelle (Rohwerte)")
-    st.dataframe(df_disp_view, use_container_width=True)
+    st.dataframe(
+        df_final.style
+            .apply(bold_mean_std, axis=None)
+            .format(precision=2),
+        use_container_width=True)
+
