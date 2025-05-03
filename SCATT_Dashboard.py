@@ -1,14 +1,21 @@
-import streamlit as st 
+import streamlit as st
+st.set_page_config(layout="wide")                # Muss wirklich *als allererstes* kommen!
+
 import pandas as pd, numpy as np, subprocess, math, re, os, glob
 from pathlib import Path
 import plotly.graph_objects as go
 
-st.set_page_config(layout="wide")
+"""SCATT Dashboard – SCATT‑Datenanalyse
+
+Upload von .txt Dateien die in deinem Athlet:innen Ordner auf Onedrive abgelegt sind. 
+
+"""
+
 if "zoom_range" not in st.session_state:
     st.session_state.zoom_range = {"x": None, "y": None}
 
+# ═══════════════════ Hilfs‑Funktionen ═══════════════════════════════════════
 
-# ═══════════════════ Hilfs-Funktionen ═══════════════════════════════════════
 def draw_target_plotly(disc: str) -> go.Figure:
     specs_map = {
         '10m Air Rifle': [(45.5,'white'),(40.5,'white'),(35.5,'white'),(30.5,'black'),
@@ -22,7 +29,7 @@ def draw_target_plotly(disc: str) -> go.Figure:
                        (200,'black'),(100,'black')],
         '10m Air Pistol': [(155.5,'white'),(139.5,'white'),(123.5,'white'),(107.5,'white'),
                            (91.5,'white'),(75.5,'white'),(59.5,'black'),(43.5,'black'),
-                           (27.5,'black'),(11.5,'white')],
+                           (27.5,'black'),(11.5,'black'),(5.0,'black')],
         '25m Rapid Fire Pistol': [(500,'black'),(420,'black'),(340,'black'),(260,'black'),
                                   (180,'black'),(100,'black')],
         '25m Precision Pistol': [(500,'white'),(450,'white'),(400,'white'),(350,'white'),
@@ -47,11 +54,13 @@ def draw_target_plotly(disc: str) -> go.Figure:
                       margin=dict(l=20,r=20,t=20,b=20),showlegend=False)
     return fig
 
-def safe_rm(p): 
-    try: os.remove(p)
-    except FileNotFoundError: pass
+def safe_rm(p):
+    try:
+        os.remove(p)
+    except FileNotFoundError:
+        pass
 
-# ═══════════════════ Datei laden ════════════════════════════════════════════
+# ═══════════════════ Datei laden (unverändert) ══════════════════════════════
 @st.cache_data(show_spinner="Exportiere SCATT …")
 def load_content(buf: bytes, name: str) -> list[str]:
     if name.lower().endswith(".txt"):
@@ -64,7 +73,7 @@ def load_content(buf: bytes, name: str) -> list[str]:
                          cwd=pipe,shell=True,text=True,capture_output=True)
     if res.returncode:
         safe_rm(f_scatt)
-        raise RuntimeError(f"Export-Fehler:\n{res.stderr}")
+        raise RuntimeError(f"Export‑Fehler:\n{res.stderr}")
     txt = next(pipe.glob(f_scatt.stem+"*.txt"), None)
     if not txt:
         safe_rm(f_scatt); raise RuntimeError("Kein TXT erstellt.")
@@ -74,54 +83,53 @@ def load_content(buf: bytes, name: str) -> list[str]:
 
 @st.cache_data(show_spinner="Lade Excel …")
 def load_excel(file: bytes) -> tuple[list[str], str | None]:
-    # Größtes Tabellenblatt automatisch wählen
     xls = pd.ExcelFile(file)
-    sheet_lengths = {sheet: pd.read_excel(file, sheet_name=sheet).shape[0] for sheet in xls.sheet_names}
-    main_sheet = max(sheet_lengths, key=sheet_lengths.get)
+    main_sheet = max(xls.sheet_names, key=lambda s: pd.read_excel(file, sheet_name=s).shape[0])
     df = pd.read_excel(file, sheet_name=main_sheet)
 
-    # Zeitachse extrahieren
     if "Zeit (s)" not in df.columns:
         raise ValueError("Spalte 'Zeit (s)' fehlt in der Excel-Datei.")
     t_vals = df["Zeit (s)"].to_numpy()
 
-    # Alle Spaltenpaare 'Sx x', 'Sx y' erkennen
     schussnummern = sorted(set(
         col.split()[0][1:] for col in df.columns if col.startswith("S") and ("x" in col or "y" in col)
     ), key=int)
 
     lines = []
     for nr in schussnummern:
-        col_x = f"S{nr} x"
-        col_y = f"S{nr} y"
+        col_x = f"S{nr} x"; col_y = f"S{nr} y"
         if col_x in df.columns and col_y in df.columns:
-            x_vals = df[col_x].to_numpy()
-            y_vals = df[col_y].to_numpy()
+            x_vals = df[col_x].to_numpy(); y_vals = df[col_y].to_numpy()
             lines.append(f"Shot #{nr}")
             for t, x, y in zip(t_vals, x_vals, y_vals):
                 lines.append(f"{t:.3f} x={x:.2f} y={y:.2f}")
-        # Disziplin extrahieren, falls vorhanden
+
+    disc_list = ['10m Air Rifle','50m Rifle','300m Rifle',
+                 '10m Air Pistol','25m Rapid Fire Pistol','25m Precision Pistol']
     discipline = None
     if "Disziplin" in df.columns:
-        first_value = df["Disziplin"].dropna().astype(str).iloc[0].strip()
+        first_value = str(df["Disziplin"].dropna().iloc[0]).strip()
         discipline = first_value if first_value in disc_list else None
 
     return lines, discipline
 
-
-
-
-up = st.file_uploader("SCATT- oder Excel-Datei", type=["scatt", "txt", "xlsx"])
+# ═══════════════════ Upload & Parsing ═══════════════════════════════════════
+up = st.file_uploader(".txt‑Datei", type=["txt"])
 if not up:
     st.stop()
-invert_y = up.name.lower().endswith(".xlsx")  # Excel braucht -y-Achse
 
-# ═══════════════════ Shots parsen ══════════════════════════════════════════
+invert_y = up.name.lower().endswith(".txt")  # Excel: Koordinaten invertieren
+
+# ---------------- Shots einlesen ----------------
+@st.cache_data(show_spinner=False)
 def parse(ls):
     shots, cur = [], []
     for l in (ln.strip() for ln in ls):
-        if l.startswith("Shot #"): 
-            if cur: shots.append(pd.DataFrame(cur,columns=["t","x","y"])); cur=[]
+        if l.startswith("Shot #"):
+            if cur:
+                df = pd.DataFrame(cur, columns=["t","x","y"])
+                shots.append(df)
+                cur = []
         elif l:
             p = l.split()
             if len(p) >= 3:
@@ -130,13 +138,15 @@ def parse(ls):
                     x = float(p[1].split('=')[1] if '=' in p[1] else p[1])
                     y = float(p[2].split('=')[1] if '=' in p[2] else p[2])
                     cur.append([t, x, y])
-                except:
+                except ValueError:
                     pass
-    if cur: shots.append(pd.DataFrame(cur, columns=["t", "x", "y"]))
+    if cur:
+        shots.append(pd.DataFrame(cur, columns=["t","x","y"]))
     return shots
 
 @st.cache_data(show_spinner=False)
-def get_shots(ls): return parse(ls)
+def get_shots(ls):
+    return parse(ls)
 
 try:
     if up.name.lower().endswith(".xlsx"):
@@ -149,18 +159,24 @@ except Exception as e:
     st.error(str(e))
     st.stop()
 
-
 if not shots:
     st.error("Keine Schüsse erkannt.")
     st.stop()
 
+# ---------------- EINMALIGE Y‑Inversion ----------------
+if invert_y:
+    for s in shots:
+        s["y"] *= -1  # y nach oben drehen
+    invert_y = False  # weitere Logik benötigt es nicht mehr
+
 
 # ═══════════════════ Disziplin erkennen ════════════════════════════════════
+
 disc_list = ['10m Air Rifle','50m Rifle','300m Rifle',
              '10m Air Pistol','25m Rapid Fire Pistol','25m Precision Pistol']
 
 if up.name.lower().endswith(".xlsx"):
-    if discipline_excel:
+    if 'discipline_excel' in locals() and discipline_excel:
         discipline = st.sidebar.selectbox("Disziplin wählen", disc_list, index=disc_list.index(discipline_excel))
     else:
         discipline = st.sidebar.selectbox("Disziplin wählen", disc_list)
@@ -168,25 +184,22 @@ else:
     m = re.match(r'^([^\(]+)', lines[0])
     discipline = m.group(1).strip() if m and m.group(1).strip() in disc_list else disc_list[0]
 
-
     st.text_area("Erste Zeile", lines[0], height=70)
 
 st.sidebar.success(f"Disziplin: **{discipline}**")
 
 
 # ═══════════════════ Auswahl-Umschalter (statt Tabs) ═══════════════════════
+
 tab_choice = st.radio("Ansicht wählen",
     ("🎯 Ziel","📈 Geschwindigkeit","📏 Ringwert","📊 Gruppenvergleich"),
     key="main_tabs", horizontal=True)
 
 
-@st.cache_data(show_spinner=False)
-def get_shots(ls): return parse(ls)
-
-shots = get_shots(lines)
-if not shots: st.warning("Keine Schüsse."); st.stop()
+# Duplicate cache def get_shots removed – already defined above
 
 # ═══════════════════ Konstanten & Score ════════════════════════════════════
+
 PROJECTILE_DIAM = {
     '10m Air Rifle':4.5,'50m Rifle':5.6,'25m Rapid Fire Pistol':5.6,
     '25m Precision Pistol':5.6,'300m Rifle':7.62,'10m Air Pistol':4.5}
@@ -215,6 +228,7 @@ def bias(sh):
         yi = np.interp(t0, ts['t'], y_vals)
         arr.append((xi[idx0], yi[idx0]))
     return np.mean(arr, axis=0)
+
 xbias,ybias=bias(shots)
 
 # ═══════════════════ Sidebar-Einstellungen ═════════════════════════════════
@@ -234,7 +248,12 @@ show_timing_vecs = st.sidebar.checkbox("Timing-Vector", True)
 
 # ═══════════════════ Metriken berechnen ════════════════════════════════════
 @st.cache_data(show_spinner="Berechne Metriken…")
+
 def metrics(sh, st_hold):
+    """Berechnet Metriken für alle Schüsse.
+
+    NEU: X_Timing und Y_Timing werden zurückgegeben.
+    """
     mask=(t0>=st_hold)&(t0<=-0.2)
     xi_all,yi_all=[],[]
     for s in sh:
@@ -249,6 +268,9 @@ def metrics(sh, st_hold):
         for i in range(len(sh))]
     ym=[yi_all[i,mask][finite[i]].mean() if finite[i].any() else np.nan
         for i in range(len(sh))]
+
+    # Timingpunkt – 50 ms vor dem Schuss (t = −0.05 s)
+    timing_idx_fixed = np.argmin(np.abs(t0 - (-0.05)))
 
     rows = []
     for i in range(len(sh)):
@@ -274,12 +296,11 @@ def metrics(sh, st_hold):
         speed_hold = speed[mask]
         hold_speed = np.nanmean(speed_hold) if np.isfinite(speed_hold).any() else np.nan
 
-        # Timing Winkel
-        timing_idx_fixed = np.argmin(np.abs(t0 - (-0.05)))
+        # Timing Koordinaten
         xtime = xi_all[i][timing_idx_fixed]
         ytime = yi_all[i][timing_idx_fixed]
 
-        # Vektoren: Timingpunkt → Schuss & Zentrum
+        # Timing Winkel
         v1 = np.array([x0 - xtime, y0 - ytime])        # zum Schuss
         v2 = np.array([-xtime, -ytime])               # zum Scheibenzentrum
 
@@ -291,8 +312,7 @@ def metrics(sh, st_hold):
             angle_rad = np.arccos(np.clip(dot / norm_product, -1.0, 1.0))
             timing_angle = np.degrees(angle_rad)
 
-
-
+        # --- FIX: store timing coordinates ---
         rows.append(dict(
             Shot=f"Shot {i+1}",
             Aiming_Error=aiming,
@@ -301,7 +321,9 @@ def metrics(sh, st_hold):
             Hold_Speed=hold_speed,
             Timing_Angle=timing_angle,
             Center_Distance=dist,
-            Score=score
+            Score=score,
+            X_Timing=xtime,
+            Y_Timing=ytime,
         ))
 
     df = pd.DataFrame(rows)
@@ -318,6 +340,7 @@ def metrics(sh, st_hold):
                 .set_index("Shot"))
 
 all_metrics = metrics(shots, start_hold)
+
 
 # ═══════════════════ Checkbox-Filter Tabelle ═══════════════════════════════
 st.sidebar.markdown("### Tabelle filtern")
