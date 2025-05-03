@@ -1,6 +1,5 @@
 import streamlit as st
-st.set_page_config(layout="wide")                # Muss wirklich *als allererstes* kommen!
-
+st.set_page_config(layout="wide") 
 import pandas as pd, numpy as np, subprocess, math, re, os, glob
 from pathlib import Path
 import plotly.graph_objects as go
